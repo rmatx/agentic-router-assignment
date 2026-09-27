@@ -1,6 +1,6 @@
 # Agentic Router: Sub-Query Division Design
 
-**Companion document for:** `Copy_of_001_Agentic_Router.ipynb`  
+**Companion document for:** `Agentic_Router.ipynb`  
 **Assignment scope:** Part 1, Sub-query division  
 **Optional extension:** RBAC-aware semantic caching
 
@@ -31,7 +31,56 @@ The design follows the editorial diagram principles from [cathrynlavery/diagram-
 - Adding a new agent framework.
 - Claiming that decomposition solves ambiguity in every natural-language query.
 
-## 3. High-level architecture
+## 3. Before and after
+
+### Before: one question, one route
+
+The original `agentic_rag(user_query)` flow sends the complete user query to the router once. The selected route then performs one retrieval or Internet search. A compound request is therefore forced through one source, even when its clauses need different sources.
+
+```mermaid
+flowchart LR
+    U[User compound question] --> R[route_query once]
+    R --> S{One selected source}
+    S --> T[One retrieval or web search]
+    T --> A[One answer]
+```
+
+### After: split, route, answer, compose
+
+The new `agentic_rag_multi(user_query)` flow inserts a splitter before routing. Each focused sub-question gets its own route decision and answer. Multiple answers are citation-adjusted and composed; a single answer bypasses composition.
+
+```mermaid
+flowchart LR
+    U[User compound question] --> S[sub_queries]
+    S --> V[parse_sub_queries]
+    V --> Q[Focused sub-questions]
+    Q --> R1[route_query per sub-question]
+    R1 --> T1[Selected route tool]
+    T1 --> A1[Answer with citations]
+    A1 --> C{One or many?}
+    C -- One --> E[Return unchanged]
+    C -- Many --> N[Renumber citations]
+    N --> M[compose_answer]
+    M --> E2[One coherent cited answer]
+```
+
+### Changes made
+
+| Area | Before | After |
+|---|---|---|
+| Query handling | The full request was treated as one search | `sub_queries()` divides compound requests into focused questions |
+| Routing | One route decision for the full request | `route_query()` runs independently for every sub-question |
+| Source coverage | A compound request could use only one source | Different sub-questions can use 10-K, OpenAI docs, or Internet search independently |
+| Model output parsing | No decomposition response to validate | `parse_sub_queries()` handles prose, code fences, malformed JSON, and invalid lists |
+| Answer assembly | One route answer | Per-question answers are composed into one response |
+| Citations | Citation numbers could collide when answers were combined | `renumber_citations()` offsets markers so sources remain distinct |
+| Single-question behavior | Direct route answer | Same direct answer path, with no extra composition LLM call |
+| Composition failure | No multi-answer fallback | Independent answers are returned in a readable stacked format |
+| Testing | Manual example calls | Live examples plus deterministic regression tests for parsing, routing, composition, and citations |
+
+This change is intentionally additive: the existing route tools, retrieval collections, and `agentic_rag()` behavior remain in place. The new function reuses those route tools rather than duplicating retrieval logic.
+
+## 4. High-level architecture
 
 ```mermaid
 flowchart LR
@@ -57,7 +106,7 @@ flowchart LR
 
 The important boundary is between `Sub-query splitter` and `Route one question`. Routing happens after decomposition and is repeated for every sub-question. The system never assumes that all pieces of a compound request belong to the same source.
 
-## 4. Request sequence
+## 5. Request sequence
 
 ```mermaid
 sequenceDiagram
@@ -90,7 +139,7 @@ sequenceDiagram
     end
 ```
 
-## 5. Component responsibilities
+## 6. Component responsibilities
 
 | Component | Responsibility | Failure behavior |
 |---|---|---|
@@ -102,7 +151,7 @@ sequenceDiagram
 | `compose_answer()` | Ask one model call to merge answers without inventing or dropping citations | Caller returns the sub-answers stacked if composition fails |
 | `agentic_rag_multi()` | Orchestrate splitting, independent routing, execution, and composition | Always attempts to return a useful answer rather than crashing |
 
-## 6. Core design decisions
+## 7. Core design decisions
 
 ### 6.1 Decompose before routing
 
@@ -129,7 +178,7 @@ A single sub-question returns its route answer directly. This preserves the orig
 
 The implementation exposes `concurrent=True`. In that mode, independent sub-queries run in worker threads and asynchronous document routes use their own event loops. Composition remains sequential because it depends on all per-question answers. The default remains sequential for easier debugging and predictable notebook execution.
 
-## 7. Optional RBAC and semantic cache
+## 8. Optional RBAC and semantic cache
 
 The notebook also contains an optional extension. The cache is partitioned by route label rather than by user ID or role. This lets users who share access to `OPENAI_QUERY` reuse an answer while still preventing a user from reading a partition for a source they cannot access.
 
@@ -154,7 +203,7 @@ flowchart TD
 
 Permission is checked against the current role on every cache operation. If a role changes, entries for newly forbidden sources become unreachable immediately; entries for newly permitted sources may become available without re-keying the cache. If access later becomes file- or chunk-level rather than source-level, the cache partition must include the exact permitted source set or retrieval filter.
 
-## 8. Validation plan and observed results
+## 9. Validation plan and observed results
 
 The notebook includes live examples and a saved deterministic regression-test cell. The regression tests stub external model and retrieval calls so the control-flow checks can run repeatedly without extra API usage.
 
@@ -169,7 +218,7 @@ The notebook includes live examples and a saved deterministic regression-test ce
 
 The saved regression cell prints `Part 1 regression tests passed.` when these assertions succeed.
 
-## 9. Risks and mitigations
+## 10. Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
@@ -180,8 +229,8 @@ The saved regression cell prints `Part 1 regression tests passed.` when these as
 | Cache leaks across permissions | Route and enforce RBAC before cache lookup; partition by permitted source |
 | Parallel execution complicates async state | Use a separate event loop per worker thread and keep sequential mode as default |
 
-## 10. Submission summary
+## 11. Submission summary
 
 The required Part 1 implementation is contained in the notebook function `agentic_rag_multi(user_query)`. It adds decomposition, independent routing, citation-safe composition, a single-question fast path, and malformed-output fallback while reusing the notebook's existing route functions.
 
-The notebook is the executable submission. This document is the accompanying design explanation and can be attached alongside it.
+The notebook is the executable submission, saved as `Agentic_Router.ipynb`. This document is the accompanying design explanation and can be attached alongside it.
